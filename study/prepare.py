@@ -1,6 +1,6 @@
 """
 Load 200 items from ARC-Challenge, BoolQ, and SQuAD.
-Apply all 8 prompt templates per item → write prompts.jsonl.
+Apply all 8 prompt templates per item - write prompts.jsonl.
 
 Usage:
     python study/prepare.py --n 200 --seed 42 --out-dir study/output
@@ -112,5 +112,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 

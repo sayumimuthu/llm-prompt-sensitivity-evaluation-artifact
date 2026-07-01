@@ -2,16 +2,26 @@
 Run inference over prompts.jsonl.
 
 Backends:
-  ollama    — local Ollama server 
-  hf_local  — load model directly via transformers 
+  ollama    — local Ollama server
+  hf_local  — load model directly via transformers
+  openai    — OpenAI API (gpt-4*, gpt-5*, ...)
+  anthropic — Anthropic API (claude-haiku-4-5, claude-sonnet-4-6, ...)
 
 Usage:
-    # Ollama 
+    # Ollama
     python study/infer.py --model llama3.1:8b --out-file study/output/llama_responses.jsonl
 
-    # HF local 
+    # HF local
     python study/infer.py --backend hf_local --model HuggingFaceTB/SmolLM2-1.7B-Instruct \
         --out-file study/output/smollm_responses.jsonl
+
+    # OpenAI
+    python study/infer.py --backend openai --model gpt-4o \
+        --out-file study/output/gpt-4o/responses.jsonl
+
+    # Anthropic
+    python study/infer.py --backend anthropic --model claude-haiku-4-5 \
+        --out-file study/output/claude-haiku-4-5/responses.jsonl
 """
 
 import argparse
@@ -162,7 +172,72 @@ def infer_hf_local(prompt: str, model: str, temperature: float,
     return tokenizer.decode(new_ids, skip_special_tokens=True).strip()
 
 
-# Main 
+# OpenAI backend
+_OPENAI_CLIENT_CACHE: Dict[str, Any] = {}
+
+
+def _is_openai_reasoning_model(model: str) -> bool:
+    """GPT-5 / o-series models use max_completion_tokens and a fixed temperature."""
+    return model.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def infer_openai(prompt: str, model: str, temperature: float,
+                 max_tokens: int, api_key: str | None) -> str:
+    from openai import OpenAI
+
+    if api_key not in _OPENAI_CLIENT_CACHE:
+        _OPENAI_CLIENT_CACHE[api_key] = OpenAI(api_key=api_key)
+    client = _OPENAI_CLIENT_CACHE[api_key]
+
+    kwargs: Dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant. Answer concisely and accurately."},
+            {"role": "user",   "content": prompt},
+        ],
+    }
+    if _is_openai_reasoning_model(model):
+        # Reasoning models reject `max_tokens` and only support default temperature.
+        kwargs["max_completion_tokens"] = max_tokens
+    else:
+        kwargs["temperature"] = temperature
+        kwargs["max_tokens"] = max_tokens
+
+    resp = client.chat.completions.create(**kwargs)
+    return (resp.choices[0].message.content or "").strip()
+
+
+# Anthropic backend
+_ANTHROPIC_CLIENT_CACHE: Dict[str, Any] = {}
+
+
+def infer_anthropic(prompt: str, model: str, temperature: float,
+                    max_tokens: int, api_key: str | None) -> str:
+    import anthropic
+
+    if api_key not in _ANTHROPIC_CLIENT_CACHE:
+        _ANTHROPIC_CLIENT_CACHE[api_key] = (
+            anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+        )
+    client = _ANTHROPIC_CLIENT_CACHE[api_key]
+
+    try:
+        resp = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system="You are a helpful assistant. Answer concisely and accurately.",
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except anthropic.RateLimitError as exc:
+        raise RuntimeError(f"Anthropic rate limit: {exc}") from exc
+    except anthropic.APIStatusError as exc:
+        raise RuntimeError(f"Anthropic API error ({exc.status_code}): {exc}") from exc
+
+    return "".join(block.text for block in resp.content if block.type == "text").strip()
+
+
+# Main
 
 def main() -> None:
     _load_env("att1/.env")
@@ -171,12 +246,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run inference for the prompt-sensitivity study.")
     parser.add_argument("--in-file",         default="study/output/prompts.jsonl")
     parser.add_argument("--out-file",        default="study/output/responses.jsonl")
-    parser.add_argument("--backend",         choices=["ollama", "hf_local"], default="ollama")
+    parser.add_argument("--backend",         choices=["ollama", "hf_local", "openai", "anthropic"],
+                        default="ollama")
     parser.add_argument("--model",           default=os.getenv("INFER_MODEL", "llama3.1:8b"))
     parser.add_argument("--temperature",     type=float, default=0.0)
     parser.add_argument("--max-tokens",      type=int,   default=64)
     parser.add_argument("--ollama-base-url", default=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
     parser.add_argument("--ollama-api-key",  default=os.getenv("OLLAMA_API_KEY"))
+    parser.add_argument("--openai-api-key",  default=os.getenv("OPENAI_API_KEY"))
+    parser.add_argument("--anthropic-api-key", default=os.getenv("ANTHROPIC_API_KEY"))
     parser.add_argument("--device",          default=os.getenv("DEVICE", "auto"))
     parser.add_argument("--limit",           type=int, default=0, help="0 = no limit")
     args = parser.parse_args()
@@ -216,9 +294,17 @@ def main() -> None:
                     prompt, args.model, args.temperature, args.max_tokens,
                     args.ollama_base_url, args.ollama_api_key,
                 )
-            else:
+            elif args.backend == "hf_local":
                 response = infer_hf_local(
                     prompt, args.model, args.temperature, args.max_tokens, device
+                )
+            elif args.backend == "openai":
+                response = infer_openai(
+                    prompt, args.model, args.temperature, args.max_tokens, args.openai_api_key
+                )
+            else:  # anthropic
+                response = infer_anthropic(
+                    prompt, args.model, args.temperature, args.max_tokens, args.anthropic_api_key
                 )
         except Exception as exc:
             print(f"  ERROR row {i}: {exc}")
@@ -241,4 +327,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
