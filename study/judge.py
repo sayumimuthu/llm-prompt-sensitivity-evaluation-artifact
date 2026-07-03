@@ -3,25 +3,38 @@ LLM-as-Judge: for each response, ask a judge LLM whether it correctly answers
 the question. Adds 'judge_correct' (bool) and 'judge_raw' (str) to each row.
 
 Backends:
-  hf_local  — load judge model directly via transformers 
-  ollama    — Ollama server 
+  hf_local  — load judge model directly via transformers
+  ollama    — Ollama server
+  openai    — OpenAI API (gpt-4*, gpt-5*, ...)
+  anthropic — Anthropic API (claude-haiku-4-5, claude-sonnet-4-6, ...)
 
 The judge prompt follows Hua et al. (2509.01790v1).
 
+IMPORTANT: the judge model must NOT also be in the set of models you are
+testing/prompting — using a tested model as its own judge reintroduces
+self-evaluation bias. Pick a judge backend/model that is held out from infer.py.
+
 Usage:
-    # HF local 
+    # HF local
     python study/judge.py \
         --in-file  study/output/smollm/responses.jsonl \
         --out-file study/output/smollm/judged.jsonl \
         --judge-backend hf_local \
         --judge-model HuggingFaceTB/SmolLM2-1.7B-Instruct
 
-    # Ollama 
+    # Ollama
     python study/judge.py \
         --in-file  study/output/llama/responses.jsonl \
         --out-file study/output/llama/judged.jsonl \
         --judge-backend ollama \
         --judge-model llama3.1:8b
+
+    # Anthropic (recommended held-out judge)
+    python study/judge.py \
+        --in-file  study/output/llama/responses.jsonl \
+        --out-file study/output/llama/judged.jsonl \
+        --judge-backend anthropic \
+        --judge-model claude-haiku-4-5
 """
 
 import argparse
@@ -188,7 +201,69 @@ def _judge_hf_local(judge_prompt: str, model: str, device: str) -> str:
     return tokenizer.decode(new_ids, skip_special_tokens=True).strip().lower()
 
 
-# Main 
+# OpenAI backend
+_OPENAI_JUDGE_CLIENT_CACHE: Dict[str, Any] = {}
+
+
+def _is_openai_reasoning_model(model: str) -> bool:
+    return model.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _judge_openai(judge_prompt: str, model: str, api_key: Optional[str]) -> str:
+    from openai import OpenAI
+
+    if api_key not in _OPENAI_JUDGE_CLIENT_CACHE:
+        _OPENAI_JUDGE_CLIENT_CACHE[api_key] = OpenAI(api_key=api_key)
+    client = _OPENAI_JUDGE_CLIENT_CACHE[api_key]
+
+    kwargs: Dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": JUDGE_SYSTEM},
+            {"role": "user",   "content": judge_prompt},
+        ],
+    }
+    if _is_openai_reasoning_model(model):
+        kwargs["max_completion_tokens"] = 10
+    else:
+        kwargs["temperature"] = 0.0
+        kwargs["max_tokens"] = 10
+
+    resp = client.chat.completions.create(**kwargs)
+    return (resp.choices[0].message.content or "").strip().lower()
+
+
+# Anthropic backend
+_ANTHROPIC_JUDGE_CLIENT_CACHE: Dict[str, Any] = {}
+
+
+def _judge_anthropic(judge_prompt: str, model: str, api_key: Optional[str]) -> str:
+    import anthropic
+
+    if api_key not in _ANTHROPIC_JUDGE_CLIENT_CACHE:
+        _ANTHROPIC_JUDGE_CLIENT_CACHE[api_key] = (
+            anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+        )
+    client = _ANTHROPIC_JUDGE_CLIENT_CACHE[api_key]
+
+    try:
+        resp = client.messages.create(
+            model=model,
+            max_tokens=10,
+            temperature=0.0,
+            system=JUDGE_SYSTEM,
+            messages=[{"role": "user", "content": judge_prompt}],
+        )
+    except anthropic.RateLimitError as exc:
+        raise RuntimeError(f"Anthropic rate limit: {exc}") from exc
+    except anthropic.APIStatusError as exc:
+        raise RuntimeError(f"Anthropic API error ({exc.status_code}): {exc}") from exc
+
+    text = "".join(block.text for block in resp.content if block.type == "text")
+    return text.strip().lower()
+
+
+# Main
 
 def main() -> None:
     _load_env("att1/.env")
@@ -197,7 +272,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="LLM-as-Judge evaluation pass.")
     parser.add_argument("--in-file",         default="study/output/responses.jsonl")
     parser.add_argument("--out-file",        default="study/output/judged.jsonl")
-    parser.add_argument("--judge-backend",   choices=["hf_local", "ollama"],
+    parser.add_argument("--judge-backend",   choices=["hf_local", "ollama", "openai", "anthropic"],
                         default=os.getenv("JUDGE_BACKEND", "hf_local"))
     parser.add_argument("--judge-model",
                         default=os.getenv("JUDGE_MODEL",
@@ -206,6 +281,8 @@ def main() -> None:
     parser.add_argument("--ollama-base-url", default=os.getenv("OLLAMA_BASE_URL",
                                                                 "http://localhost:11434"))
     parser.add_argument("--ollama-api-key",  default=os.getenv("OLLAMA_API_KEY"))
+    parser.add_argument("--openai-api-key",  default=os.getenv("OPENAI_API_KEY"))
+    parser.add_argument("--anthropic-api-key", default=os.getenv("ANTHROPIC_API_KEY"))
     parser.add_argument("--limit",           type=int, default=0)
     args = parser.parse_args()
 
@@ -252,9 +329,13 @@ def main() -> None:
         try:
             if args.judge_backend == "hf_local":
                 judge_raw = _judge_hf_local(judge_prompt, args.judge_model, device)
-            else:
+            elif args.judge_backend == "ollama":
                 judge_raw = _judge_ollama(judge_prompt, args.judge_model,
                                           args.ollama_base_url, args.ollama_api_key)
+            elif args.judge_backend == "openai":
+                judge_raw = _judge_openai(judge_prompt, args.judge_model, args.openai_api_key)
+            else:  # anthropic
+                judge_raw = _judge_anthropic(judge_prompt, args.judge_model, args.anthropic_api_key)
             judge_correct = parse_verdict(judge_raw)
         except Exception as exc:
             print(f"  JUDGE ERROR row {i}: {exc}")
