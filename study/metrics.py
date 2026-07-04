@@ -125,13 +125,28 @@ def bootstrap_ci(values: np.ndarray, n_boot: int = 1000, ci: float = 0.95) -> tu
     return lo, hi
 
 
-# Tri-zone classification
+# Four-zone classification
+#
+# Classifies each instance by whether heuristic (SensH) and judge (SensJ)
+# independently detect sensitivity, using the 75th-percentile of each as
+# the "high sensitivity" threshold.
+#
+# Zone        | SensH high? | SensJ high? | Meaning
+# ------------|-------------|-------------|-----------------------------------
+# stable      |     no      |     no      | Both methods agree: no sensitivity
+# artifact    |    yes      |     no      | Heuristic overcounts; judge doesn't see it
+# underdetected|    no      |    yes      | Judge detects sensitivity heuristic misses
+# genuine     |    yes      |    yes      | Both methods agree: real instability
 
-def classify_trizone(eas: float, sens_judge: float,
-                     eas_thresh: float, sj_thresh: float) -> str:
-    if eas >= eas_thresh and sens_judge < sj_thresh:
+def classify_fourzone(sens_heuristic: float, sens_judge: float,
+                      sh_thresh: float, sj_thresh: float) -> str:
+    h = sens_heuristic > sh_thresh
+    j = sens_judge     > sj_thresh
+    if h and not j:
         return "artifact"
-    if eas < eas_thresh and sens_judge >= sj_thresh:
+    if not h and j:
+        return "underdetected"
+    if h and j:
         return "genuine"
     return "stable"
 
@@ -224,18 +239,20 @@ def main() -> None:
 
     inst_df = pd.DataFrame(instance_records)
 
-    # Tri-zone thresholds: use 75th percentile for SensJudge when median is 0
-    # (median = 0 means >50% of items have constant judge verdicts, making the
-    #  "artifact" zone unreachable; 75th pct gives a non-trivial boundary)
-    eas_thresh = float(inst_df["eas"].median())
-    sj_median  = float(inst_df["sens_judge"].median())
-    sj_thresh  = float(inst_df["sens_judge"].quantile(0.75)) if sj_median == 0.0 else sj_median
-    print(f"\nTri-zone thresholds — EAS median: {eas_thresh:.4f}  "
-          f"SensJudge threshold: {sj_thresh:.4f}  "
-          f"(SensJudge median={sj_median:.4f})")
+    # Four-zone thresholds: 75th percentile of SensH and SensJ independently.
+    # Using the 75th percentile means ~25% of items are "high sensitivity" by
+    # each method, creating a balanced four-quadrant space.  The old approach
+    # (median EAS as threshold) collapsed to zero because 60%+ of items have
+    # EAS = 0, making "eas < 0" mathematically unreachable.
+    sh_thresh = float(inst_df["sens_heuristic"].quantile(0.75))
+    sj_thresh = float(inst_df["sens_judge"].quantile(0.75))
+    print(f"\nFour-zone thresholds — SensH 75th pct: {sh_thresh:.4f}  "
+          f"SensJ 75th pct: {sj_thresh:.4f}")
 
     inst_df["trizone"] = inst_df.apply(
-        lambda r: classify_trizone(r["eas"], r["sens_judge"], eas_thresh, sj_thresh),
+        lambda r: classify_fourzone(
+            r["sens_heuristic"], r["sens_judge"], sh_thresh, sj_thresh
+        ),
         axis=1,
     )
 
@@ -244,7 +261,7 @@ def main() -> None:
     print(f"Saved instance metrics → {args.out_instance}")
 
     # Quick summary
-    print("\nTRI-ZONE COUNTS BY (DATASET, MODEL)")
+    print("\nFOUR-ZONE COUNTS BY (DATASET, MODEL)")
     summary = (inst_df.groupby(["dataset", "model_name", "trizone"])
                .size().unstack(fill_value=0))
     print(summary.to_string())
@@ -265,9 +282,10 @@ def main() -> None:
                mean_heuristic=("mean_heuristic", "mean"),
                mean_judge=("mean_judge",     "mean"),
                stab_sem_mean=("stab_sem", "mean"),
-               n_artifact=("trizone", lambda x: (x == "artifact").sum()),
-               n_genuine=("trizone",   lambda x: (x == "genuine").sum()),
-               n_stable=("trizone",    lambda x: (x == "stable").sum()),
+               n_artifact=("trizone",      lambda x: (x == "artifact").sum()),
+               n_genuine=("trizone",        lambda x: (x == "genuine").sum()),
+               n_underdetected=("trizone",  lambda x: (x == "underdetected").sum()),
+               n_stable=("trizone",         lambda x: (x == "stable").sum()),
                n_items=("id", "count"),
            )
            .reset_index())
