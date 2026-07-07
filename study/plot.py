@@ -26,9 +26,11 @@ import pandas as pd
 
 # Colour palette
 
-ZONE_COLOR = {"artifact": "#E07B54", "genuine": "#5480E0", "stable": "#54C278"}
-ZONE_LABEL = {"artifact": "Artifact",  "genuine": "Genuine",  "stable": "Stable"}
-ZONES      = ["artifact", "genuine", "stable"]
+ZONE_COLOR = {"artifact": "#E07B54", "genuine": "#5480E0", "stable": "#54C278",
+              "underdetected": "#C278D4"}
+ZONE_LABEL = {"artifact": "Artifact",  "genuine": "Genuine",  "stable": "Stable",
+              "underdetected": "Underdetected"}
+ZONES      = ["artifact", "genuine", "underdetected", "stable"]
 
 DATASET_LABEL = {
     "arc_challenge": "ARC-Challenge\n(MCQ)",
@@ -70,7 +72,7 @@ def figure1_trizone(inst_df: pd.DataFrame, out_path: Path) -> None:
     fig, axes = _grid_axes(len(models), cell_w=5.0, cell_h=4.5)
 
     x     = np.arange(len(datasets))
-    width = 0.22
+    width = 0.18
 
     for ax, model in zip(axes, models):
         mdf = inst_df[inst_df["model_name"] == model]
@@ -80,7 +82,7 @@ def figure1_trizone(inst_df: pd.DataFrame, out_path: Path) -> None:
                 sub = mdf[mdf["dataset"] == ds]
                 pct = (sub["trizone"] == zone).mean() * 100 if len(sub) else 0.0
                 pcts.append(pct)
-            offset = (zi - 1) * (width + 0.02)
+            offset = (zi - 1.5) * (width + 0.02)
             ax.bar(x + offset, pcts, width,
                    label=ZONE_LABEL[zone], color=ZONE_COLOR[zone],
                    alpha=0.88, edgecolor="white", linewidth=0.8)
@@ -97,9 +99,9 @@ def figure1_trizone(inst_df: pd.DataFrame, out_path: Path) -> None:
         ax.grid(axis="y", linestyle="--", alpha=0.4)
 
     handles = [mpatches.Patch(color=ZONE_COLOR[z], label=ZONE_LABEL[z]) for z in ZONES]
-    fig.legend(handles=handles, loc="upper center", ncol=3,
+    fig.legend(handles=handles, loc="upper center", ncol=4,
                bbox_to_anchor=(0.5, 1.01), fontsize=9, frameon=False)
-    fig.suptitle("Figure 1  Tri-Zone Distribution by Dataset and Model",
+    fig.suptitle("Figure 1  Four-Zone Distribution by Dataset and Model",
                  y=1.05, fontsize=11, fontweight="bold")
     plt.tight_layout()
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -127,8 +129,8 @@ def figure2_scatter(inst_df: pd.DataFrame, out_path: Path) -> None:
         lim = max(mdf["sens_heuristic"].max(), mdf["sens_judge"].max()) * 1.05 + 0.01
         ax.plot([0, lim], [0, lim], "k--", linewidth=0.9, alpha=0.35, label="Equal", zorder=2)
 
-        ax.axhline(inst_df["sens_judge"].median(),     color="grey", linewidth=0.5, linestyle=":", alpha=0.6)
-        ax.axvline(inst_df["sens_heuristic"].median(), color="grey", linewidth=0.5, linestyle=":", alpha=0.6)
+        ax.axhline(inst_df["sens_judge"].quantile(0.75),     color="grey", linewidth=0.5, linestyle=":", alpha=0.6)
+        ax.axvline(inst_df["sens_heuristic"].quantile(0.75), color="grey", linewidth=0.5, linestyle=":", alpha=0.6)
 
         ax.set_xlabel("SensHeuristic  (σ exact / F1)", fontsize=9)
         ax.set_ylabel("SensJudge  (σ judge score)", fontsize=9)
@@ -139,7 +141,7 @@ def figure2_scatter(inst_df: pd.DataFrame, out_path: Path) -> None:
         ax.tick_params(labelsize=8)
 
     handles = ([mpatches.Patch(color=ZONE_COLOR[z], label=ZONE_LABEL[z]) for z in ZONES]
-               + [plt.Line2D([0], [0], color="k", linestyle="--", linewidth=0.9, label="Equal")])
+               + [plt.Line2D([0], [0], color="k", linestyle="--", linewidth=0.9, label="Equal")])  # noqa: E501
     fig.legend(handles=handles, loc="upper center", ncol=4,
                bbox_to_anchor=(0.5, 1.01), fontsize=9, frameon=False)
     fig.suptitle("Figure 2  Heuristic vs. Judge Sensitivity per Instance",
