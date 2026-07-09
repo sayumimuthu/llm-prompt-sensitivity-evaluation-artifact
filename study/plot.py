@@ -1,266 +1,380 @@
 """
-Generate the figures from metrics_instance.csv.
-
-Figure 1: Tri-zone bar chart — fraction of instances in each zone, by dataset × model.
-Figure 2: Scatter — SensHeuristic vs SensJudge, colored by tri-zone, per model.
-Figure 3: Structural ablation heatmap — factor effects on heuristic vs judge scores.
-Figure 4 : EAS by task type
-Figure 5: Mean EAS with bootstrap CI by dataset × model
-Figure 6: Signed EAS
 
 Usage:
-    python study/plot.py \
-        --in-instance study/output/metrics_instance.csv \
-        --out-dir     study/output/figures
+    python study/plot.py \\
+        --in-instance study/output/combined_final/metrics_instance.csv \\
+        --in-dataset  study/output/combined_final/metrics_dataset.csv \\
+        --out-dir     study/output/combined_final/figures
 """
 
 import argparse
 from pathlib import Path
-from typing import List
 
+import matplotlib
+import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from matplotlib.gridspec import GridSpec
 import numpy as np
 import pandas as pd
 
 
-# Colour palette
+matplotlib.rcParams.update({
+    "font.family":          "sans-serif",
+    "font.sans-serif":      ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
+    "font.size":            9,
+    "axes.titlesize":       9,
+    "axes.titleweight":     "bold",
+    "axes.titlepad":        5,
+    "axes.labelsize":       8,
+    "axes.labelpad":        3,
+    "xtick.labelsize":      7.5,
+    "ytick.labelsize":      7.5,
+    "legend.fontsize":      8.5,
+    "legend.title_fontsize":8.5,
+    "figure.dpi":           300,
+    "savefig.dpi":          300,
+    "savefig.bbox":         "tight",
+    "savefig.pad_inches":   0.06,
+    "axes.linewidth":       0.6,
+    "xtick.major.width":    0.6,
+    "ytick.major.width":    0.6,
+    "xtick.major.size":     3.0,
+    "ytick.major.size":     3.0,
+    "xtick.minor.visible":  False,
+    "ytick.minor.visible":  False,
+    "axes.spines.top":      False,
+    "axes.spines.right":    False,
+    "axes.axisbelow":       True,
+    # Solid hairline grid — per dataviz spec
+    "grid.linewidth":       0.5,
+    "grid.color":           "#e1e0d9",
+    "grid.alpha":           1.0,
+    "grid.linestyle":       "-",
+    "figure.facecolor":     "white",
+    "axes.facecolor":       "white",
+})
 
-ZONE_COLOR = {"artifact": "#E07B54", "genuine": "#5480E0", "stable": "#54C278",
-              "underdetected": "#C278D4"}
-ZONE_LABEL = {"artifact": "Artifact",  "genuine": "Genuine",  "stable": "Stable",
-              "underdetected": "Underdetected"}
-ZONES      = ["artifact", "genuine", "underdetected", "stable"]
+
+ZONE_COLOR = {
+    "artifact":      "#eb6834",   # slot 8 — orange
+    "genuine":       "#2a78d6",   # slot 1 — blue
+    "underdetected": "#4a3aa7",   # slot 5 — violet
+    "stable":        "#1baf7a",   # slot 2 — aqua/green
+}
+ZONE_LABEL = {
+    "artifact":      "Artifact",
+    "genuine":       "Genuine",
+    "underdetected": "Underdetected",
+    "stable":        "Stable",
+}
+ZONES = ["artifact", "genuine", "underdetected", "stable"]
+
+# Signed-EAS and heatmap diverging poles (blue ↔ orange, neutral gray mid)
+CLR_POS = "#eb6834"   # positive signed EAS: heuristic inflates
+CLR_NEG = "#2a78d6"   # negative signed EAS: judge detects more
+CLR_MID = "#f0efec"   # neutral midpoint
+
+# Multi-model series colors (slots 1-8 in fixed CVD-safe order)
+MODEL_COLORS = [
+    "#2a78d6",  # blue
+    "#1baf7a",  # aqua
+    "#eda100",  # yellow
+    "#008300",  # green
+    "#4a3aa7",  # violet
+    "#e34948",  # red
+    "#e87ba4",  # magenta
+    "#eb6834",  # orange
+    "#52514e",  # secondary ink (9th model)
+]
+
+# Model display names 
+MODEL_DISPLAY = {
+    "gemma2:2b":          "Gemma2-2B",
+    "gpt-4o":             "GPT-4o",
+    "llama3.1:8b":        "Llama3.1-8B",
+    "llama3.2:1b":        "Llama3.2-1B",
+    "llama3.2:3b":        "Llama3.2-3B",
+    "mistral-nemo:latest":"MistralNeMo-12B",
+    "mistral:instruct":   "Mistral-7B",
+    "qwen2.5:3b":         "Qwen2.5-3B",
+    "qwen2.5:7b":         "Qwen2.5-7B",
+}
 
 DATASET_LABEL = {
     "arc_challenge": "ARC-Challenge\n(MCQ)",
     "boolq":         "BoolQ\n(Boolean)",
     "squad":         "SQuAD\n(Open-ended)",
 }
+DATASET_SHORT = {
+    "arc_challenge": "ARC",
+    "boolq":         "BoolQ",
+    "squad":         "SQuAD",
+}
 
 
-# Grid layout helper
 
-def _grid_axes(n: int, per_row: int = 4,
-               cell_w: float = 5.0, cell_h: float = 4.5,
+def _name(model: str) -> str:
+    """Clean display name for a model string."""
+    return MODEL_DISPLAY.get(model, model.split("/")[-1])
+
+
+def _style_ax(ax, ylabel: str = "", ylim=None, grid: bool = True) -> None:
+    """Shared publication axis styling."""
+    ax.spines["left"].set_linewidth(0.6)
+    ax.spines["bottom"].set_linewidth(0.6)
+    ax.tick_params(axis="both", which="major", length=3, width=0.6, pad=2.5)
+    if grid:
+        ax.grid(axis="y")
+    if ylabel:
+        ax.set_ylabel(ylabel, fontsize=8)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+
+
+def _grid_axes(n: int, per_row: int = 5,
+               cell_w: float = 2.7, cell_h: float = 3.0,
                sharey: bool = True):
-    """Return (fig, axes_flat) with at most per_row panels per row.
-
-    Unused axes in the last row are hidden automatically.
-    """
+    """Return (fig, axes_flat[:n]).  Extra slots in last row are hidden."""
     ncols = min(n, per_row)
     nrows = (n + ncols - 1) // ncols
     fig, axes = plt.subplots(
         nrows, ncols,
         figsize=(cell_w * ncols, cell_h * nrows),
-        sharey=sharey,
-        squeeze=False,
+        sharey=sharey, squeeze=False,
     )
-    axes_flat = axes.flatten()
-    for ax in axes_flat[n:]:
+    flat = axes.flatten()
+    for ax in flat[n:]:
         ax.set_visible(False)
-    return fig, axes_flat[:n]
+    return fig, flat[:n]
 
 
-# Figure 1: Tri-zone bar chart
+def _zone_legend_handles(zones=None):
+    zones = zones or ZONES
+    return [
+        mpatches.Patch(facecolor=ZONE_COLOR[z], edgecolor="none",
+                       label=ZONE_LABEL[z])
+        for z in zones
+    ]
 
+
+# Figure 1: Four-zone distribution 
 
 def figure1_trizone(inst_df: pd.DataFrame, out_path: Path) -> None:
     models   = sorted(inst_df["model_name"].unique())
     datasets = list(inst_df["dataset"].unique())
 
-    fig, axes = _grid_axes(len(models), cell_w=5.0, cell_h=4.5)
+    fig, axes = _grid_axes(len(models), per_row=5, cell_w=2.7, cell_h=3.0)
 
-    x     = np.arange(len(datasets))
-    width = 0.18
+    x = np.arange(len(datasets))
+    n_z   = len(ZONES)
+    width = 0.16
+    # Centre the bar cluster on each x tick
+    gap = 0.015
+    total = n_z * width + (n_z - 1) * gap
+    offsets = np.linspace(-total / 2 + width / 2, total / 2 - width / 2, n_z)
 
     for ax, model in zip(axes, models):
         mdf = inst_df[inst_df["model_name"] == model]
-        for zi, zone in enumerate(ZONES):
+        for zone, offset in zip(ZONES, offsets):
             pcts = []
             for ds in datasets:
                 sub = mdf[mdf["dataset"] == ds]
-                pct = (sub["trizone"] == zone).mean() * 100 if len(sub) else 0.0
-                pcts.append(pct)
-            offset = (zi - 1.5) * (width + 0.02)
+                pcts.append((sub["trizone"] == zone).mean() * 100 if len(sub) else 0.0)
             ax.bar(x + offset, pcts, width,
-                   label=ZONE_LABEL[zone], color=ZONE_COLOR[zone],
-                   alpha=0.88, edgecolor="white", linewidth=0.8)
+                   color=ZONE_COLOR[zone],
+                   edgecolor="white", linewidth=0.8)   # 0.8 px surface gap
 
         ax.set_xticks(x)
-        ax.set_xticklabels([DATASET_LABEL.get(d, d) for d in datasets], fontsize=9)
-        short_model = model.split("/")[-1]
-        ax.set_title(short_model, fontsize=10, fontweight="bold", pad=6)
-        ax.set_ylabel("% of instances", fontsize=9)
-        ax.set_ylim(0, 100)
-        ax.yaxis.set_tick_params(labelsize=8)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.grid(axis="y", linestyle="--", alpha=0.4)
+        ax.set_xticklabels([DATASET_LABEL.get(d, d) for d in datasets], fontsize=7)
+        ax.set_title(_name(model))
+        _style_ax(ax, ylabel="% of instances", ylim=(0, 100))
+        ax.yaxis.set_major_locator(mticker.MultipleLocator(25))
 
-    handles = [mpatches.Patch(color=ZONE_COLOR[z], label=ZONE_LABEL[z]) for z in ZONES]
+    handles = _zone_legend_handles()
     fig.legend(handles=handles, loc="upper center", ncol=4,
-               bbox_to_anchor=(0.5, 1.01), fontsize=9, frameon=False)
-    fig.suptitle("Figure 1  Four-Zone Distribution by Dataset and Model",
-                 y=1.05, fontsize=11, fontweight="bold")
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+               bbox_to_anchor=(0.5, 1.01), fontsize=8.5, frameon=False,
+               columnspacing=1.2, handlelength=1.2, handleheight=0.85)
+    plt.tight_layout(rect=[0, 0, 1, 0.96], h_pad=0.8, w_pad=0.5)
+    plt.savefig(out_path, dpi=300)
     plt.close()
     print(f"  Saved {out_path}")
 
 
-# Figure 2: Scatter SensHeuristic vs SensJudge
-
+# Figure 2: Scatter SensH vs SensJ 
 
 def figure2_scatter(inst_df: pd.DataFrame, out_path: Path) -> None:
     models = sorted(inst_df["model_name"].unique())
 
-    fig, axes = _grid_axes(len(models), cell_w=5.0, cell_h=4.5)
+    fig, axes = _grid_axes(len(models), per_row=5, cell_w=2.7, cell_h=2.8, sharey=False)
+
+    sh75 = inst_df["sens_heuristic"].quantile(0.75)
+    sj75 = inst_df["sens_judge"].quantile(0.75)
 
     for ax, model in zip(axes, models):
         mdf = inst_df[inst_df["model_name"] == model]
-
         for zone in ZONES:
             sub = mdf[mdf["trizone"] == zone]
             ax.scatter(sub["sens_heuristic"], sub["sens_judge"],
                        c=ZONE_COLOR[zone], label=ZONE_LABEL[zone],
-                       alpha=0.70, edgecolors="white", linewidths=0.4, s=55, zorder=3)
+                       alpha=0.60, edgecolors="white", linewidths=0.3,
+                       s=16, zorder=3, rasterized=True)
 
-        lim = max(mdf["sens_heuristic"].max(), mdf["sens_judge"].max()) * 1.05 + 0.01
-        ax.plot([0, lim], [0, lim], "k--", linewidth=0.9, alpha=0.35, label="Equal", zorder=2)
+        lim = max(mdf["sens_heuristic"].max(), mdf["sens_judge"].max()) * 1.08 + 0.01
+        # Identity line
+        ax.plot([0, lim], [0, lim], color="#c3c2b7", linewidth=0.8,
+                linestyle="--", zorder=2, label="Equal")
+        # 75th-pct threshold lines (zone boundaries)
+        ax.axhline(sj75, color="#898781", linewidth=0.5, linestyle=":", zorder=1)
+        ax.axvline(sh75, color="#898781", linewidth=0.5, linestyle=":", zorder=1)
 
-        ax.axhline(inst_df["sens_judge"].quantile(0.75),     color="grey", linewidth=0.5, linestyle=":", alpha=0.6)
-        ax.axvline(inst_df["sens_heuristic"].quantile(0.75), color="grey", linewidth=0.5, linestyle=":", alpha=0.6)
+        ax.set_xlabel("SensH  (σ exact / F1)", fontsize=7.5)
+        ax.set_ylabel("SensJ  (σ judge)", fontsize=7.5)
+        ax.set_title(_name(model))
+        _style_ax(ax, grid=False)
+        ax.tick_params(labelsize=7)
 
-        ax.set_xlabel("SensHeuristic  (σ exact / F1)", fontsize=9)
-        ax.set_ylabel("SensJudge  (σ judge score)", fontsize=9)
-        short_model = model.split("/")[-1]
-        ax.set_title(short_model, fontsize=10, fontweight="bold", pad=6)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.tick_params(labelsize=8)
-
-    handles = ([mpatches.Patch(color=ZONE_COLOR[z], label=ZONE_LABEL[z]) for z in ZONES]
-               + [plt.Line2D([0], [0], color="k", linestyle="--", linewidth=0.9, label="Equal")])  # noqa: E501
-    fig.legend(handles=handles, loc="upper center", ncol=4,
-               bbox_to_anchor=(0.5, 1.01), fontsize=9, frameon=False)
-    fig.suptitle("Figure 2  Heuristic vs. Judge Sensitivity per Instance",
-                 y=1.05, fontsize=11, fontweight="bold")
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    handles = (_zone_legend_handles()
+               + [plt.Line2D([0], [0], color="#c3c2b7", linestyle="--",
+                             linewidth=0.9, label="Equal")])
+    fig.legend(handles=handles, loc="upper center", ncol=5,
+               bbox_to_anchor=(0.5, 1.01), fontsize=8.5, frameon=False,
+               columnspacing=1.0, handlelength=1.2)
+    plt.tight_layout(rect=[0, 0, 1, 0.96], h_pad=0.8, w_pad=0.5)
+    plt.savefig(out_path, dpi=300)
     plt.close()
     print(f"  Saved {out_path}")
 
 
-# Figure 3: Structural ablation heatmap
-
-
+# Figure 3: Structural ablation heatmap 
 def figure3_ablation(inst_df: pd.DataFrame, out_path: Path) -> None:
     models        = sorted(inst_df["model_name"].unique())
     factors       = ["role", "fmt", "prefix"]
-    factor_labels = {"role": "Role Framing", "fmt": "Format Directive", "prefix": "Answer Prefix"}
-    eval_labels   = ["Heuristic", "Judge", "Heuristic−Judge\n(artifact share)"]
+    factor_labels = ["Role", "Format", "Prefix"]
+    col_labels    = ["Heuristic", "Judge", "H − J"]
+    vmax          = 0.15
 
-    fig, axes = _grid_axes(len(models), cell_w=5.0, cell_h=3.5, sharey=False)
+    # Blue–gray–orange diverging colormap 
+    cmap = mcolors.LinearSegmentedColormap.from_list(
+        "pub_div", [(0.0, CLR_NEG), (0.5, CLR_MID), (1.0, CLR_POS)]
+    )
 
-    vmax = 0.20
-    im   = None
-    for ax, model in zip(axes, models):
+    n     = len(models)
+    ncols = 5
+    nrows = (n + ncols - 1) // ncols  # 2
+
+    # Extra narrow column on the right for the colourbar
+    fig = plt.figure(figsize=(2.5 * ncols + 0.55, 2.35 * nrows))
+    gs  = GridSpec(nrows, ncols + 1, figure=fig,
+                   width_ratios=[1.0] * ncols + [0.055],
+                   hspace=0.62, wspace=0.32)
+
+    model_axes = []
+    for idx in range(n):
+        r, c = divmod(idx, ncols)
+        model_axes.append(fig.add_subplot(gs[r, c]))
+
+    cbar_ax = fig.add_subplot(gs[:, ncols])  # spans both rows
+
+    im = None
+    for ax, model in zip(model_axes, models):
         mdf  = inst_df[inst_df["model_name"] == model]
         data = np.zeros((len(factors), 3))
+        for fi, f in enumerate(factors):
+            eh = float(mdf[f"effect_{f}_heuristic"].mean())
+            ej = float(mdf[f"effect_{f}_judge"].mean())
+            data[fi] = [eh, ej, eh - ej]
 
-        for fi, factor in enumerate(factors):
-            eh = float(mdf[f"effect_{factor}_heuristic"].mean())
-            ej = float(mdf[f"effect_{factor}_judge"].mean())
-            data[fi, 0] = eh
-            data[fi, 1] = ej
-            data[fi, 2] = eh - ej
-
-        im = ax.imshow(data, cmap="RdYlGn", vmin=-vmax, vmax=vmax, aspect="auto")
+        im = ax.imshow(data, cmap=cmap, vmin=-vmax, vmax=vmax, aspect="auto")
 
         ax.set_xticks(range(3))
-        ax.set_xticklabels(eval_labels, fontsize=8)
+        ax.set_xticklabels(col_labels, fontsize=7)
         ax.set_yticks(range(len(factors)))
-        ax.set_yticklabels([factor_labels[f] for f in factors], fontsize=9)
-
-        short_model = model.split("/")[-1]
-        ax.set_title(short_model, fontsize=10, fontweight="bold", pad=6)
+        ax.set_yticklabels(factor_labels, fontsize=7)
+        ax.set_title(_name(model), fontsize=9, fontweight="bold", pad=4)
+        ax.tick_params(left=False, bottom=False)
+        for sp in ax.spines.values():
+            sp.set_visible(False)
 
         for fi in range(len(factors)):
             for ei in range(3):
                 val   = data[fi, ei]
-                color = "white" if abs(val) > vmax * 0.6 else "black"
-                ax.text(ei, fi, f"{val:+.3f}", ha="center", va="center",
-                        fontsize=8, color=color, fontweight="bold")
+                # White text on strongly saturated cells, dark otherwise
+                color = "white" if abs(val) / vmax > 0.55 else "#0b0b0b"
+                ax.text(ei, fi, f"{val:+.3f}",
+                        ha="center", va="center",
+                        fontsize=6.5, color=color, fontweight="bold")
 
     if im is not None:
-        cbar = plt.colorbar(im, ax=axes[-1], fraction=0.046, pad=0.04)
-        cbar.set_label("Effect on mean score\n(factor present − absent)", fontsize=8)
-        cbar.ax.tick_params(labelsize=7)
+        cbar = fig.colorbar(im, cax=cbar_ax)
+        cbar.set_label("Effect  (ON − OFF)", fontsize=7.5, labelpad=4)
+        cbar.ax.tick_params(labelsize=7, width=0.5, length=2)
+        cbar.outline.set_linewidth(0.5)
+        # Annotate poles
+        cbar_ax.text(0.5, 1.03, "H inflates", transform=cbar_ax.transAxes,
+                     ha="center", va="bottom", fontsize=6, color="#52514e")
+        cbar_ax.text(0.5, -0.03, "J inflates", transform=cbar_ax.transAxes,
+                     ha="center", va="top",    fontsize=6, color="#52514e")
 
-    fig.suptitle(
-        "Figure 3  Structural Factor Effects\n"
-        "(positive Heuristic−Judge = factor inflates apparent sensitivity)",
-        fontsize=10, fontweight="bold",
-    )
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"  Saved {out_path}")
 
 
-# Figure 4 : EAS by task type
+# Figure 4: EAS by task type 
 
 def figure4_eas_by_task(inst_df: pd.DataFrame, out_path: Path) -> None:
     models  = sorted(inst_df["model_name"].unique())
     tasks   = ["mcq", "boolean", "open_ended"]
     t_label = {"mcq": "MCQ", "boolean": "Boolean", "open_ended": "Open-ended"}
 
-    fig, axes = _grid_axes(len(models), cell_w=5.0, cell_h=4.0)
+    fig, axes = _grid_axes(len(models), per_row=5, cell_w=2.7, cell_h=3.0)
+
+    # Task colors: genuine=MCQ, stable=Boolean, artifact=Open-ended
+    task_colors = [ZONE_COLOR["genuine"], ZONE_COLOR["stable"], ZONE_COLOR["artifact"]]
 
     for ax, model in zip(axes, models):
         mdf  = inst_df[inst_df["model_name"] == model]
         data = [mdf.loc[mdf["task_type"] == t, "eas"].dropna().values for t in tasks]
-        bp   = ax.boxplot(data, patch_artist=True, widths=0.5,
-                          medianprops={"color": "black", "linewidth": 2})
-        colors = ["#5480E0", "#54C278", "#E07B54"]
-        for patch, color in zip(bp["boxes"], colors):
+        bp   = ax.boxplot(data, patch_artist=True, widths=0.48,
+                          medianprops={"color": "#0b0b0b", "linewidth": 1.5},
+                          whiskerprops={"linewidth": 0.7, "color": "#52514e"},
+                          capprops=  {"linewidth": 0.7, "color": "#52514e"},
+                          boxprops=  {"linewidth": 0.6},
+                          flierprops={"marker": "o", "markersize": 2.0,
+                                      "markerfacecolor": "#898781",
+                                      "markeredgewidth": 0.0,
+                                      "linestyle": "none", "alpha": 0.6})
+        for patch, color in zip(bp["boxes"], task_colors):
             patch.set_facecolor(color)
-            patch.set_alpha(0.75)
+            patch.set_alpha(0.85)
+            patch.set_edgecolor("#0b0b0b")
 
         ax.set_xticks(range(1, len(tasks) + 1))
-        ax.set_xticklabels([t_label[t] for t in tasks], fontsize=9)
-        short_model = model.split("/")[-1]
-        ax.set_title(short_model, fontsize=10, fontweight="bold", pad=6)
-        ax.set_ylabel("EAS (Evaluation-Attributable Sensitivity)", fontsize=8)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.grid(axis="y", linestyle="--", alpha=0.4)
+        ax.set_xticklabels([t_label[t] for t in tasks], fontsize=7.5)
+        ax.set_title(_name(model))
+        _style_ax(ax, ylabel="EAS")
 
-    fig.suptitle("Figure 4  EAS Distribution by Task Type",
-                 fontsize=11, fontweight="bold")
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.tight_layout(h_pad=0.8, w_pad=0.5)
+    plt.savefig(out_path, dpi=300)
     plt.close()
     print(f"  Saved {out_path}")
 
 
-# Figure 5: Mean EAS with bootstrap CI by dataset × model
-
+# Figure 5: Mean EAS with bootstrap CI 
 
 def figure5_eas_ci(agg_df: pd.DataFrame, out_path: Path) -> None:
     models   = sorted(agg_df["model_name"].unique())
     datasets = list(agg_df["dataset"].unique())
     has_ci   = "eas_ci_lo" in agg_df.columns
 
-    fig, ax = plt.subplots(figsize=(max(7, 1.5 * len(models)), 4.5))
-    x       = np.arange(len(datasets))
-    width   = 0.7 / len(models)
-    colors  = ["#5480E0", "#E07B54", "#54C278", "#9B59B6",
-               "#E0A020", "#20C0C0", "#C05080", "#80A040"]
+    fig, ax = plt.subplots(figsize=(max(7, 1.4 * len(models)), 3.8))
+    x     = np.arange(len(datasets))
+    width = 0.65 / len(models)
 
     for mi, model in enumerate(models):
-        mdf                  = agg_df[agg_df["model_name"] == model]
+        mdf                     = agg_df[agg_df["model_name"] == model]
         means, lo_errs, hi_errs = [], [], []
         for ds in datasets:
             row = mdf[mdf["dataset"] == ds]
@@ -275,34 +389,29 @@ def figure5_eas_ci(agg_df: pd.DataFrame, out_path: Path) -> None:
             else:
                 lo_errs.append(0); hi_errs.append(0)
 
-        offset     = (mi - (len(models) - 1) / 2) * (width + 0.02)
-        short_name = model.split("/")[-1]
-        bar_kw: dict = dict(label=short_name, color=colors[mi % len(colors)],
-                            alpha=0.85, edgecolor="white", linewidth=0.8)
+        offset = (mi - (len(models) - 1) / 2) * (width + 0.01)
+        kw: dict = dict(
+            label=_name(model),
+            color=MODEL_COLORS[mi % len(MODEL_COLORS)],
+            edgecolor="white", linewidth=0.6,
+        )
         if has_ci:
-            bar_kw["yerr"]      = [lo_errs, hi_errs]
-            bar_kw["capsize"]   = 3
-            bar_kw["error_kw"]  = {"linewidth": 1.2, "ecolor": "black"}
-        ax.bar(x + offset, means, width, **bar_kw)
+            kw["yerr"]     = [lo_errs, hi_errs]
+            kw["capsize"]  = 2.5
+            kw["error_kw"] = {"linewidth": 0.9, "ecolor": "#52514e", "capthick": 0.9}
+        ax.bar(x + offset, means, width, **kw)
 
     ax.set_xticks(x)
-    ax.set_xticklabels([DATASET_LABEL.get(d, d) for d in datasets], fontsize=9)
-    ax.set_ylabel("Mean EAS", fontsize=9)
-    ci_note = "  (error bars = 95% bootstrap CI)" if has_ci else ""
-    ax.set_title(f"Figure 5  Mean EAS by Dataset and Model{ci_note}",
-                 fontsize=10, fontweight="bold", pad=8)
-    ax.legend(fontsize=8, frameon=False, ncol=2)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.grid(axis="y", linestyle="--", alpha=0.4)
+    ax.set_xticklabels([DATASET_LABEL.get(d, d) for d in datasets], fontsize=8.5)
+    _style_ax(ax, ylabel="Mean EAS")
+    ax.legend(fontsize=7.5, frameon=False, ncol=3,
+              loc="upper left", handlelength=1.0, columnspacing=0.8)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.savefig(out_path, dpi=300)
     plt.close()
     print(f"  Saved {out_path}")
 
-
-# Figure 6: Signed EAS — direction of evaluation disagreement
-
+# Figure 6: Signed EAS 
 
 def figure6_signed_eas(inst_df: pd.DataFrame, out_path: Path) -> None:
     if "signed_eas" not in inst_df.columns:
@@ -312,46 +421,41 @@ def figure6_signed_eas(inst_df: pd.DataFrame, out_path: Path) -> None:
     models   = sorted(inst_df["model_name"].unique())
     datasets = list(inst_df["dataset"].unique())
 
-    fig, axes = _grid_axes(len(models), cell_w=5.0, cell_h=4.0)
+    fig, axes = _grid_axes(len(models), per_row=5, cell_w=2.7, cell_h=3.0)
 
     for ax, model in zip(axes, models):
-        mdf    = inst_df[inst_df["model_name"] == model]
-        x      = np.arange(len(datasets))
-        means  = [float(mdf.loc[mdf["dataset"] == ds, "signed_eas"].mean())
-                  for ds in datasets]
-        colors = ["#E07B54" if m >= 0 else "#5480E0" for m in means]
-        ax.bar(x, means, color=colors, alpha=0.85, edgecolor="white", linewidth=0.8)
-        ax.axhline(0, color="black", linewidth=0.8)
+        mdf   = inst_df[inst_df["model_name"] == model]
+        x     = np.arange(len(datasets))
+        means = [float(mdf.loc[mdf["dataset"] == ds, "signed_eas"].mean())
+                 for ds in datasets]
+        colors = [CLR_POS if m >= 0 else CLR_NEG for m in means]
+
+        ax.bar(x, means, color=colors, edgecolor="white", linewidth=0.8)
+        ax.axhline(0, color="#0b0b0b", linewidth=0.8, zorder=3)
+
         ax.set_xticks(x)
-        ax.set_xticklabels([DATASET_LABEL.get(d, d) for d in datasets], fontsize=9)
-        short_model = model.split("/")[-1]
-        ax.set_title(short_model, fontsize=10, fontweight="bold", pad=6)
-        ax.set_ylabel("Mean Signed EAS", fontsize=9)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.grid(axis="y", linestyle="--", alpha=0.4)
+        ax.set_xticklabels([DATASET_LABEL.get(d, d) for d in datasets], fontsize=7)
+        ax.set_title(_name(model))
+        _style_ax(ax, ylabel="Mean Signed EAS")
 
     handles = [
-        mpatches.Patch(color="#E07B54", label="Heuristic > Judge  (heuristic inflates)"),
-        mpatches.Patch(color="#5480E0", label="Judge > Heuristic  (judge inflates)"),
+        mpatches.Patch(facecolor=CLR_POS, edgecolor="none",
+                       label="Heuristic inflates  (H > J)"),
+        mpatches.Patch(facecolor=CLR_NEG, edgecolor="none",
+                       label="Judge detects more  (J > H)"),
     ]
     fig.legend(handles=handles, loc="upper center", ncol=2,
-               bbox_to_anchor=(0.5, 1.01), fontsize=9, frameon=False)
-    fig.suptitle(
-        "Figure 6  Signed EAS: Direction of Evaluation Disagreement\n"
-        "(positive = heuristic overestimates sensitivity, negative = judge overestimates)",
-        y=1.05, fontsize=10, fontweight="bold",
-    )
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+               bbox_to_anchor=(0.5, 1.01), fontsize=8.5, frameon=False,
+               columnspacing=1.5, handlelength=1.2)
+    plt.tight_layout(rect=[0, 0, 1, 0.96], h_pad=0.8, w_pad=0.5)
+    plt.savefig(out_path, dpi=300)
     plt.close()
     print(f"  Saved {out_path}")
 
 
-# Main
-
+# Main 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate figures.")
+    parser = argparse.ArgumentParser(description="Generate publication-quality figures.")
     parser.add_argument("--in-instance", default="study/output/combined_final/metrics_instance.csv")
     parser.add_argument("--in-dataset",  default="study/output/combined_final/metrics_dataset.csv")
     parser.add_argument("--out-dir",     default="study/output/combined_final/figures")
@@ -365,7 +469,7 @@ def main() -> None:
         agg_df = pd.read_csv(args.in_dataset)
     except FileNotFoundError:
         agg_df = None
-        print(f"  Warning: dataset CSV not found at {args.in_dataset} — skipping Fig 5")
+        print("  Warning: dataset CSV not found — skipping Fig 5")
 
     print("Generating figures...")
     figure1_trizone(inst_df,     out_dir / "fig1_trizone.png")
@@ -380,4 +484,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
