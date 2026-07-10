@@ -335,10 +335,10 @@ def figure3_ablation(inst_df: pd.DataFrame, out_path: Path) -> None:
 
         is_leftmost = (idx % ncols == 0)
         ax.set_xticks(range(3))
-        ax.set_xticklabels(col_labels, fontsize=9)
+        ax.set_xticklabels(col_labels, fontsize=12)
         ax.set_yticks(range(len(factors)))
         ax.set_yticklabels(factor_labels if is_leftmost else [], fontsize=9)
-        ax.set_title(_name(model), fontsize=10, fontweight="bold", pad=5)
+        ax.set_title(_name(model), fontsize=13, fontweight="bold", pad=5)
         ax.tick_params(left=False, bottom=False)
         for sp in ax.spines.values():
             sp.set_visible(False)
@@ -349,7 +349,7 @@ def figure3_ablation(inst_df: pd.DataFrame, out_path: Path) -> None:
                 color = "white" if abs(val) / vmax > 0.55 else "#0b0b0b"
                 ax.text(ei, fi, f"{val:+.3f}",
                         ha="center", va="center",
-                        fontsize=15, color=color, fontweight="bold")
+                        fontsize=13, color=color, fontweight="bold")
 
     if im is not None:
         cbar = fig.colorbar(im, cax=cbar_ax)
@@ -532,4 +532,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
