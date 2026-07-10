@@ -305,7 +305,7 @@ def figure3_ablation(inst_df: pd.DataFrame, out_path: Path) -> None:
     # This allows the bottom row to be centred: the 4 panels sit in the
     # middle of the 10-column panel space with 1 empty column on each side.
     gs_cols = 2 * ncols                 # 10 panel columns
-    fig = plt.figure(figsize=(2.5 * ncols + 0.55, 2.35 * nrows))
+    fig = plt.figure(figsize=(3.1 * ncols + 0.7, 3.0 * nrows))
     gs  = GridSpec(nrows, gs_cols + 1, figure=fig,
                    width_ratios=[1.0] * gs_cols + [0.11],
                    hspace=0.65, wspace=0.50,
@@ -335,10 +335,10 @@ def figure3_ablation(inst_df: pd.DataFrame, out_path: Path) -> None:
 
         is_leftmost = (idx % ncols == 0)
         ax.set_xticks(range(3))
-        ax.set_xticklabels(col_labels, fontsize=7)
+        ax.set_xticklabels(col_labels, fontsize=9)
         ax.set_yticks(range(len(factors)))
-        ax.set_yticklabels(factor_labels if is_leftmost else [], fontsize=7)
-        ax.set_title(_name(model), fontsize=9, fontweight="bold", pad=4)
+        ax.set_yticklabels(factor_labels if is_leftmost else [], fontsize=9)
+        ax.set_title(_name(model), fontsize=10, fontweight="bold", pad=5)
         ax.tick_params(left=False, bottom=False)
         for sp in ax.spines.values():
             sp.set_visible(False)
@@ -346,22 +346,20 @@ def figure3_ablation(inst_df: pd.DataFrame, out_path: Path) -> None:
         for fi in range(len(factors)):
             for ei in range(3):
                 val   = data[fi, ei]
-                # White text on strongly saturated cells, dark otherwise
                 color = "white" if abs(val) / vmax > 0.55 else "#0b0b0b"
                 ax.text(ei, fi, f"{val:+.3f}",
                         ha="center", va="center",
-                        fontsize=6.5, color=color, fontweight="bold")
+                        fontsize=9, color=color, fontweight="bold")
 
     if im is not None:
         cbar = fig.colorbar(im, cax=cbar_ax)
-        cbar.set_label("Effect  (ON − OFF)", fontsize=7.5, labelpad=4)
-        cbar.ax.tick_params(labelsize=7, width=0.5, length=2)
+        cbar.set_label("Effect  (ON − OFF)", fontsize=9, labelpad=5)
+        cbar.ax.tick_params(labelsize=8.5, width=0.6, length=3)
         cbar.outline.set_linewidth(0.5)
-        # Annotate poles
         cbar_ax.text(0.5, 1.03, "H inflates", transform=cbar_ax.transAxes,
-                     ha="center", va="bottom", fontsize=6, color="#52514e")
+                     ha="center", va="bottom", fontsize=8, color="#52514e")
         cbar_ax.text(0.5, -0.03, "J inflates", transform=cbar_ax.transAxes,
-                     ha="center", va="top",    fontsize=6, color="#52514e")
+                     ha="center", va="top",    fontsize=8, color="#52514e")
 
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
@@ -534,3 +532,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
