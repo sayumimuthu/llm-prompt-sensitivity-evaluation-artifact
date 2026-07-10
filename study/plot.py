@@ -349,7 +349,7 @@ def figure3_ablation(inst_df: pd.DataFrame, out_path: Path) -> None:
                 color = "white" if abs(val) / vmax > 0.55 else "#0b0b0b"
                 ax.text(ei, fi, f"{val:+.3f}",
                         ha="center", va="center",
-                        fontsize=13, color=color, fontweight="bold")
+                        fontsize=12, color=color, fontweight="bold")
 
     if im is not None:
         cbar = fig.colorbar(im, cax=cbar_ax)
