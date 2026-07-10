@@ -135,19 +135,49 @@ def _style_ax(ax, ylabel: str = "", ylim=None, grid: bool = True) -> None:
 
 def _grid_axes(n: int, per_row: int = 5,
                cell_w: float = 2.7, cell_h: float = 3.0,
-               sharey: bool = True):
-    """Return (fig, axes_flat[:n]).  Extra slots in last row are hidden."""
-    ncols = min(n, per_row)
-    nrows = (n + ncols - 1) // ncols
-    fig, axes = plt.subplots(
+               sharey: bool = True, center: bool = False):
+    """Return (fig, list_of_axes[:n]).
+
+    With center=True and a non-full last row, the last row is horizontally
+    centered under the full rows using a doubled-column GridSpec so that
+    the incomplete row sits in the middle rather than pinned to the left.
+    """
+    ncols  = min(n, per_row)
+    nrows  = (n + ncols - 1) // ncols
+    n_last = n - (nrows - 1) * ncols  # panels in the final row
+
+    if center and nrows > 1 and n_last < ncols:
+        # Each panel occupies 2 GridSpec columns; the last row gets
+        # (ncols - n_last) empty columns as margin on each side.
+        gs_cols = 2 * ncols
+        fig = plt.figure(figsize=(cell_w * ncols, cell_h * nrows))
+        gs  = GridSpec(nrows, gs_cols, figure=fig,
+                       hspace=0.50, wspace=0.38,
+                       top=0.92, bottom=0.08, left=0.08, right=0.98)
+        axes = []
+        for row in range(nrows - 1):                      # full rows
+            for col in range(ncols):
+                axes.append(fig.add_subplot(gs[row, 2*col : 2*col+2]))
+        margin = ncols - n_last                           # symmetric padding
+        for i in range(n_last):                           # centred last row
+            c0 = margin + 2 * i
+            axes.append(fig.add_subplot(gs[nrows - 1, c0 : c0 + 2]))
+        if sharey:
+            ref = axes[0]
+            for ax in axes[1:]:
+                ax.sharey(ref)
+        return fig, axes
+
+    # Plain subplots path — hide unused trailing slots
+    fig, arr = plt.subplots(
         nrows, ncols,
         figsize=(cell_w * ncols, cell_h * nrows),
         sharey=sharey, squeeze=False,
     )
-    flat = axes.flatten()
+    flat = arr.flatten()
     for ax in flat[n:]:
         ax.set_visible(False)
-    return fig, flat[:n]
+    return fig, list(flat[:n])
 
 
 def _zone_legend_handles(zones=None):
@@ -165,7 +195,8 @@ def figure1_trizone(inst_df: pd.DataFrame, out_path: Path) -> None:
     models   = sorted(inst_df["model_name"].unique())
     datasets = list(inst_df["dataset"].unique())
 
-    fig, axes = _grid_axes(len(models), per_row=5, cell_w=2.7, cell_h=3.0)
+    fig, axes = _grid_axes(len(models), per_row=5, cell_w=2.7, cell_h=3.0,
+                           center=True)
 
     x = np.arange(len(datasets))
     n_z   = len(ZONES)
@@ -175,7 +206,8 @@ def figure1_trizone(inst_df: pd.DataFrame, out_path: Path) -> None:
     total = n_z * width + (n_z - 1) * gap
     offsets = np.linspace(-total / 2 + width / 2, total / 2 - width / 2, n_z)
 
-    for ax, model in zip(axes, models):
+    ncols = 5
+    for i, (ax, model) in enumerate(zip(axes, models)):
         mdf = inst_df[inst_df["model_name"] == model]
         for zone, offset in zip(ZONES, offsets):
             pcts = []
@@ -184,19 +216,22 @@ def figure1_trizone(inst_df: pd.DataFrame, out_path: Path) -> None:
                 pcts.append((sub["trizone"] == zone).mean() * 100 if len(sub) else 0.0)
             ax.bar(x + offset, pcts, width,
                    color=ZONE_COLOR[zone],
-                   edgecolor="white", linewidth=0.8)   # 0.8 px surface gap
+                   edgecolor="white", linewidth=0.8)
 
         ax.set_xticks(x)
         ax.set_xticklabels([DATASET_LABEL.get(d, d) for d in datasets], fontsize=7)
         ax.set_title(_name(model))
-        _style_ax(ax, ylabel="% of instances", ylim=(0, 100))
+        # y-axis label only on the leftmost panel of each row
+        ylabel = "% of instances" if i % ncols == 0 else ""
+        _style_ax(ax, ylabel=ylabel, ylim=(0, 100))
         ax.yaxis.set_major_locator(mticker.MultipleLocator(25))
+        if i % ncols != 0:
+            ax.tick_params(labelleft=False)
 
     handles = _zone_legend_handles()
     fig.legend(handles=handles, loc="upper center", ncol=4,
-               bbox_to_anchor=(0.5, 1.01), fontsize=8.5, frameon=False,
+               bbox_to_anchor=(0.5, 0.995), fontsize=8.5, frameon=False,
                columnspacing=1.2, handlelength=1.2, handleheight=0.85)
-    plt.tight_layout(rect=[0, 0, 1, 0.96], h_pad=0.8, w_pad=0.5)
     plt.savefig(out_path, dpi=300)
     plt.close()
     print(f"  Saved {out_path}")
@@ -260,22 +295,32 @@ def figure3_ablation(inst_df: pd.DataFrame, out_path: Path) -> None:
         "pub_div", [(0.0, CLR_NEG), (0.5, CLR_MID), (1.0, CLR_POS)]
     )
 
-    n     = len(models)
-    ncols = 5
-    nrows = (n + ncols - 1) // ncols  # 2
+    n      = len(models)
+    ncols  = 5
+    nrows  = (n + ncols - 1) // ncols  # 2
+    n_last = n - (nrows - 1) * ncols   # 4
+    margin = ncols - n_last             # 1 — symmetric padding for last row
 
-    # Extra narrow column on the right for the colourbar
+    # 2 GridSpec columns per panel + 1 narrow colorbar column on the right.
+    # This allows the bottom row to be centred: the 4 panels sit in the
+    # middle of the 10-column panel space with 1 empty column on each side.
+    gs_cols = 2 * ncols                 # 10 panel columns
     fig = plt.figure(figsize=(2.5 * ncols + 0.55, 2.35 * nrows))
-    gs  = GridSpec(nrows, ncols + 1, figure=fig,
-                   width_ratios=[1.0] * ncols + [0.055],
-                   hspace=0.62, wspace=0.32)
+    gs  = GridSpec(nrows, gs_cols + 1, figure=fig,
+                   width_ratios=[1.0] * gs_cols + [0.11],
+                   hspace=0.65, wspace=0.50,
+                   top=0.95, bottom=0.06, left=0.06, right=0.96)
 
     model_axes = []
     for idx in range(n):
-        r, c = divmod(idx, ncols)
-        model_axes.append(fig.add_subplot(gs[r, c]))
+        row, col = divmod(idx, ncols)
+        if row < nrows - 1:                        # full rows
+            c0 = 2 * col
+        else:                                      # centred last row
+            c0 = margin + 2 * col
+        model_axes.append(fig.add_subplot(gs[row, c0 : c0 + 2]))
 
-    cbar_ax = fig.add_subplot(gs[:, ncols])  # spans both rows
+    cbar_ax = fig.add_subplot(gs[:, gs_cols])  # colorbar spans all rows
 
     im = None
     for ax, model in zip(model_axes, models):
@@ -288,10 +333,11 @@ def figure3_ablation(inst_df: pd.DataFrame, out_path: Path) -> None:
 
         im = ax.imshow(data, cmap=cmap, vmin=-vmax, vmax=vmax, aspect="auto")
 
+        is_leftmost = (idx % ncols == 0)
         ax.set_xticks(range(3))
         ax.set_xticklabels(col_labels, fontsize=7)
         ax.set_yticks(range(len(factors)))
-        ax.set_yticklabels(factor_labels, fontsize=7)
+        ax.set_yticklabels(factor_labels if is_leftmost else [], fontsize=7)
         ax.set_title(_name(model), fontsize=9, fontweight="bold", pad=4)
         ax.tick_params(left=False, bottom=False)
         for sp in ax.spines.values():
@@ -421,9 +467,11 @@ def figure6_signed_eas(inst_df: pd.DataFrame, out_path: Path) -> None:
     models   = sorted(inst_df["model_name"].unique())
     datasets = list(inst_df["dataset"].unique())
 
-    fig, axes = _grid_axes(len(models), per_row=5, cell_w=2.7, cell_h=3.0)
+    fig, axes = _grid_axes(len(models), per_row=5, cell_w=2.7, cell_h=3.0,
+                           center=True)
 
-    for ax, model in zip(axes, models):
+    ncols = 5
+    for i, (ax, model) in enumerate(zip(axes, models)):
         mdf   = inst_df[inst_df["model_name"] == model]
         x     = np.arange(len(datasets))
         means = [float(mdf.loc[mdf["dataset"] == ds, "signed_eas"].mean())
@@ -436,7 +484,10 @@ def figure6_signed_eas(inst_df: pd.DataFrame, out_path: Path) -> None:
         ax.set_xticks(x)
         ax.set_xticklabels([DATASET_LABEL.get(d, d) for d in datasets], fontsize=7)
         ax.set_title(_name(model))
-        _style_ax(ax, ylabel="Mean Signed EAS")
+        ylabel = "Mean Signed EAS" if i % ncols == 0 else ""
+        _style_ax(ax, ylabel=ylabel)
+        if i % ncols != 0:
+            ax.tick_params(labelleft=False)
 
     handles = [
         mpatches.Patch(facecolor=CLR_POS, edgecolor="none",
@@ -445,9 +496,8 @@ def figure6_signed_eas(inst_df: pd.DataFrame, out_path: Path) -> None:
                        label="Judge detects more  (J > H)"),
     ]
     fig.legend(handles=handles, loc="upper center", ncol=2,
-               bbox_to_anchor=(0.5, 1.01), fontsize=8.5, frameon=False,
+               bbox_to_anchor=(0.5, 0.995), fontsize=8.5, frameon=False,
                columnspacing=1.5, handlelength=1.2)
-    plt.tight_layout(rect=[0, 0, 1, 0.96], h_pad=0.8, w_pad=0.5)
     plt.savefig(out_path, dpi=300)
     plt.close()
     print(f"  Saved {out_path}")
