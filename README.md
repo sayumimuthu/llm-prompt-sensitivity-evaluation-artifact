@@ -134,14 +134,10 @@ The current implementation uses the 75th-percentile thresholds of `SensH` and `S
 
 ## Structural-factor analysis
 
-For each prompt factor $k$, the code computes its main effect as the
-difference between the mean score when that factor is enabled and disabled:
+For each prompt factor $k$, the code computes its main effect as the difference between the mean score when that factor is enabled and disabled:
 
 $$
-\Delta_k^e =
-\mathbb{E}[e \mid k = 1]
--
-\mathbb{E}[e \mid k = 0]
+\Delta_k^e = \mathbb{E}[e \mid k = 1] - \mathbb{E}[e \mid k = 0]
 $$
 
 where $e$ is either the heuristic or judge score. Comparing
