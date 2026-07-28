@@ -73,23 +73,28 @@ This produces **8 prompt variants per item**. Model responses are scored using b
 
 ## Metrics
 
-For an item \(i\), let the heuristic and judge scores across the eight prompt templates be \(h*{i,t}\) and \(j*{i,t}\).
+For an item $i$, let the heuristic and judge scores across the eight
+prompt templates be $h_{i,t}$ and $j_{i,t}$, respectively.
 
-\[
-\mathrm{SensH}_i = \sigma_t(h_{i,t})
-\]
+$$
+\mathrm{SensH}_i = \sigma_t\left(h_{i,t}\right)
+$$
 
-\[
-\mathrm{SensJ}_i = \sigma_t(j_{i,t})
-\]
+$$
+\mathrm{SensJ}_i = \sigma_t\left(j_{i,t}\right)
+$$
 
-\[
-\mathrm{EAS}\_i = \left|\mathrm{SensH}\_i-\mathrm{SensJ}\_i\right|
-\]
+$$
+\mathrm{EAS}_i =
+\left|
+\mathrm{SensH}_i - \mathrm{SensJ}_i
+\right|
+$$
 
-\[
-\mathrm{SignedEAS}\_i = \mathrm{SensH}\_i-\mathrm{SensJ}\_i
-\]
+$$
+\mathrm{SignedEAS}_i =
+\mathrm{SensH}_i - \mathrm{SensJ}_i
+$$
 
 The heuristic evaluation is task-aware:
 
@@ -129,15 +134,19 @@ The current implementation uses the 75th-percentile thresholds of `SensH` and `S
 
 ## Structural-factor analysis
 
-For each prompt factor \(k\), the code computes its main effect as the difference between the mean score when that factor is enabled and disabled:
+For each prompt factor $k$, the code computes its main effect as the
+difference between the mean score when that factor is enabled and disabled:
 
-\[
+$$
 \Delta_k^e =
-\mathbb{E}[e \mid k=1]-
-\mathbb{E}[e \mid k=0]
-\]
+\mathbb{E}[e \mid k = 1]
+-
+\mathbb{E}[e \mid k = 0]
+$$
 
-where \(e\) is either the heuristic or judge score. Comparing \(\Delta_k^h\) and \(\Delta_k^j\) distinguishes semantic improvements from changes that merely make answers easier for a heuristic to parse.
+where $e$ is either the heuristic or judge score. Comparing
+$\Delta_k^h$ and $\Delta_k^j$ distinguishes semantic improvements from
+changes that merely make answers easier for a heuristic to parse.
 
 <p align="center">
   <img src="study/output/combined_final/figures/fig3_ablation.png" alt="Structural prompt-factor effects" width="1000">
