@@ -308,8 +308,8 @@ The individual model directories contain the corresponding raw responses, judge 
 
 - **Sayumi Muthukumarana**
 - **Buddhi Wijenayake**
-- **Roshan Godaliyadda**
-- **Parakrama Ekanayake**
+- **Professor Roshan Godaliyadda**
+- **Professor Parakrama Ekanayake**
 
 University of Peradeniya, Sri Lanka.
 
