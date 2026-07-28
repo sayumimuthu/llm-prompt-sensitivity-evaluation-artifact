@@ -2,7 +2,6 @@
 
 ### A Task-Aware Analysis for Large Language Models
 
-[![Paper](https://img.shields.io/badge/Paper-PDF-B31B1B.svg)](paper/Prompt_Sensitivity_or_Evaluation_Artifact.pdf)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)
 ![Models](https://img.shields.io/badge/Models-9-7B61FF.svg)
 ![Datasets](https://img.shields.io/badge/Datasets-3-1BA784.svg)
@@ -14,10 +13,9 @@ Prompt sensitivity is commonly interpreted as an intrinsic robustness weakness o
 
 We introduce **Evaluation-Attributable Sensitivity (EAS)** and **Signed EAS**, instance-level diagnostics that compare sensitivity measured using task-specific heuristic metrics with sensitivity measured by a semantic LLM judge.
 
-> [!IMPORTANT]
 > The current implementation, final analysis code, and updated outputs are located in [`study/`](study/). Other top-level folders are retained as earlier experimental artifacts.
 
-## Method overview
+## Methodology Overview
 
 <p align="center">
   <img src="figures/eas_workflow.png" alt="Workflow of the Evaluation-Attributable Sensitivity framework" width="900">
@@ -210,7 +208,7 @@ pip install anthropic
 HF_TOKEN=your_huggingface_token
 OPENAI_API_KEY=your_openai_api_key
 ANTHROPIC_API_KEY=your_anthropic_api_key
-OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_BASE_URL=ollama_installed_server_port [Ex:http://localhost:11434]
 ```
 
 Do not commit `.env` files or API keys.
@@ -306,8 +304,6 @@ study/output/combined_final/
 
 The individual model directories contain the corresponding raw responses, judge verdicts, and intermediate outputs.
 
-```
-
 ## Authors
 
 - **Sayumi Muthukumarana**
@@ -320,4 +316,7 @@ University of Peradeniya, Sri Lanka.
 ## Acknowledgement
 
 This research was funded by the University Research Council (URC), University of Peradeniya, under Grant No. 32.
+
+```
+
 ```
