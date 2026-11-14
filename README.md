@@ -2,10 +2,20 @@
 
 ### A Task-Aware Analysis for Large Language Models
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)
-![Models](https://img.shields.io/badge/Models-9-7B61FF.svg)
-![Datasets](https://img.shields.io/badge/Datasets-3-1BA784.svg)
-![Evaluations](https://img.shields.io/badge/Evaluations-43%2C200-EA6A2A.svg)
+
+[![IEEE Xplore](https://img.shields.io/badge/IEEE%20Xplore-Published-00629B?logo=ieee&logoColor=white)](https://ieeexplore.ieee.org/document/11691277)
+[![DOI](https://img.shields.io/badge/DOI-10.1109%2FMERCon71835.2026.11691277-blue)](https://doi.org/10.1109/MERCon71835.2026.11691277)
+[![Conference](https://img.shields.io/badge/MERCon-2026-2E8B57)](https://ieeexplore.ieee.org/document/11691277)
+
+### 📄 Publication
+
+This work has been published at the **2026 Moratuwa Engineering Research Conference (MERCon)** and is available on **IEEE Xplore**.
+
+> **S. Muthukumarana, B. Wijenayake, R. Godaliyadda, and P. Ekanayake**,  
+> *“Prompt Sensitivity or Evaluation Artifact? A Task-Aware Analysis for Large Language Models,”*  
+> in **2026 Moratuwa Engineering Research Conference (MERCon)**, pp. 1082–1087, 2026.  
+> **DOI:** [10.1109/MERCon71835.2026.11691277](https://doi.org/10.1109/MERCon71835.2026.11691277)  
+> **IEEE Xplore:** [ieeexplore.ieee.org/document/11691277](https://ieeexplore.ieee.org/document/11691277)
 
 This repository contains the official implementation and experimental artifacts for **“Prompt Sensitivity or Evaluation Artifact? A Task-Aware Analysis for Large Language Models.”**
 
@@ -308,6 +318,24 @@ study/output/combined_final/
 - [`figures/`](study/output/combined_final/figures/) contains the generated result plots.
 
 The individual model directories contain the corresponding raw responses, judge verdicts, and intermediate outputs.
+
+## Citation
+
+If you find this work or repository useful, please cite our paper:
+
+```bibtex
+@inproceedings{muthukumarana2026prompt,
+  author    = {Sayumi Muthukumarana and
+               Buddhi Wijenayake and
+               Roshan Godaliyadda and
+               Parakrama Ekanayake},
+  title     = {Prompt Sensitivity or Evaluation Artifact? A Task-Aware Analysis for Large Language Models},
+  booktitle = {2026 Moratuwa Engineering Research Conference (MERCon)},
+  pages     = {1082--1087},
+  year      = {2026},
+  doi       = {10.1109/MERCon71835.2026.11691277}
+}
+```
 
 ## Authors
 
